@@ -5,14 +5,15 @@ import numpy as np
 import scipy.stats as ss
 from scipy import signal
 import matplotlib.pyplot as plt
+from statsmodels.graphics.gofplots import qqplot
 from math import factorial
 from functools import partial
 from blackScholesPricer import BS_pricer
 from scipy.stats import norm
 import pandas as pd
-from scipy.optimize import minimize
-from prereq import fft_Lewis, IV_from_Lewis, Q1, Q2
-from datetime import datetime as dt
+from scipy.ndimage import gaussian_filter
+from prereq import fft_Lewis, IV_from_Lewis, Q1, Q2, Gil_Pelaez_pdf, Merton_pdf
+
 
 
 class MJDmonteCarlo:
@@ -257,12 +258,7 @@ class Merton_pricer:
             sigJ=self.sigJ,
         )
 
-        if self.payoff == "call":
-            return IV_from_Lewis(self.K, self.S0, self.T, self.r, cf_Mert)
-        elif self.payoff == "put":
-            raise NotImplementedError
-        else:
-            raise ValueError("invalid type. Set 'call' or 'put'")
+        return IV_from_Lewis(self.K, self.S0, self.T, self.r, cf_Mert)
 
     def MC(self, N, Err=False, Time=False):
         """
@@ -397,7 +393,7 @@ class Merton_pricer:
                 for j in range(num_T):
                     self.K = K_values[i]
                     self.T = T_values[j]
-                    price_surface[j, i] = self.FFT(K)
+                    price_surface[j, i] = self.FFT(self.K)
             
             # Plotting the surface
             fig = plt.figure(figsize=(10, 7))
@@ -409,7 +405,8 @@ class Merton_pricer:
             ax.set_zlabel('Option Price')
             ax.set_title(f'Merton Jump Diffusion {self.payoff.capitalize()} Option Price Surface')
             
-            plt.show()
+            # plt.show()
+            return fig
 
     def plot_IV_surface(self, K_range, T_range,num_K=10,num_T=10):
         """
@@ -431,9 +428,37 @@ class Merton_pricer:
             for j in range(num_T):
                 self.K = K_values[i]
                 self.T = T_values[j]
-                price_surface[j, i] = self.IV_Lewis()
+                iv_value = self.IV_Lewis()
+                price_surface[j, i] = np.nan if iv_value == -1 or iv_value < 0 else iv_value
+            
+        # Smoothing: for each interior cell (i.e. not on an edge),
+        # if the IV value is too far from the average of its nonzero neighbors, then replace it.
+        tol = 0.001  # tolerance threshold; adjust this value as needed
+        for j in range(1, num_T - 1):
+            for i in range(1, num_K - 1):
+                cell_val = price_surface[j, i]
+                # Get immediate neighbors: up, down, left, right.
+                neighbors = [
+                    price_surface[j-1, i],
+                    price_surface[j+1, i],
+                    price_surface[j, i-1],
+                    price_surface[j, i+1]
+                ]
+                # Filter out neighbors that are zero or NaN.
+                valid_neighbors = [v for v in neighbors if v != 0 and not np.isnan(v)]
+                if valid_neighbors:
+                    neighbor_avg = np.mean(valid_neighbors)
+                    # If the difference is too large, replace the cell value.
+                    if abs(cell_val - neighbor_avg) > tol:
+                        price_surface[j, i] = neighbor_avg
+            price_surface = gaussian_filter(price_surface, sigma=0.75)
+        valid_vals = price_surface[~np.isnan(price_surface)]
         
-        # Plotting the surface
+        if valid_vals.size > 0:
+            zmin = np.percentile(valid_vals, 0.01)  
+            zmax = np.percentile(valid_vals, 99.99) 
+         
+        # Create the 3D plot.
         fig = plt.figure(figsize=(10, 7))
         ax = fig.add_subplot(111, projection='3d')
         ax.plot_surface(K_grid, T_grid, price_surface, cmap='viridis')
@@ -441,31 +466,34 @@ class Merton_pricer:
         ax.set_xlabel('Strike Price (K)')
         ax.set_ylabel('Time to Maturity (T)')
         ax.set_zlabel('Implied Volatility')
-        ax.set_title(f'Merton Jump Diffusion Implied Volatility Surface')
-        plt.show()
+        ax.set_title('Merton Jump Diffusion Implied Volatility Surface')
+        ax.set_zlim(zmin, zmax)
+       
+    
+        # plt.show()
+        return fig
 
-    def priceColorGrid(self, S_range, sigma_range,num_S=15,num_sigma=15, show_pl=False):
+    def priceColorGrid(self, S_range, sigma_range, num_S=15, num_sigma=15, show_pl=False):
         """
-        Generate a discrete color grid of European option prices or P/L using the Black-Scholes model, with values displayed on each cell.
+        Generate a discrete color grid of European option prices or P/L using the Black-Scholes model, 
+        with values displayed on each cell.
 
         Args:
             S_range: List or array of spot prices (S).
             sigma_range: List or array of implied volatilities (sigma).
-            r: Risk-free rate.
-            K: Strike price.
-            T: Time to maturity.
-            option_type: Specifies the option type, either 'call' or 'put'.
+            num_S: Number of discrete spot prices.
+            num_sigma: Number of discrete volatilities.
             show_pl: Boolean flag to toggle between showing option prices or P/L.
 
         Returns:
-            None. Displays a 2D discrete color grid plot.
+            fig: Matplotlib figure object.
         """
         S_values = np.linspace(S_range[0], S_range[1], num_S)
         sigma_values = np.linspace(sigma_range[0], sigma_range[1], num_sigma)
-
+        
         # Create a meshgrid for spot prices and volatilities
         S_grid, sigma_grid = np.meshgrid(S_values, sigma_values)
-
+        
         # Compute option prices or P/L for each combination of S and sigma
         values = np.zeros_like(S_grid, dtype=float)
         for i in range(S_grid.shape[0]):
@@ -474,28 +502,29 @@ class Merton_pricer:
                 sigma = sigma_grid[i, j]
                 if show_pl:
                     # Compute P/L as the difference between price and intrinsic value
-                    intrinsic_value = max(0, (S - K) if self.payoff == 'call' else (K - S))
-                    values[i, j] = self.MertonClosedForm(self.payoff, S,self.K,self.T,self.r,sigma,self.muJ,self.sigJ,self.lam) - intrinsic_value
+                    intrinsic_value = max(0, (S - self.K) if self.payoff == 'call' else (self.K - S))
+                    values[i, j] = self.MertonClosedForm(self.payoff, S, self.K, self.T, self.r, sigma, self.muJ, self.sigJ, self.lam) - intrinsic_value
                 else:
                     # Get the price
-                    values[i, j] = self.MertonClosedForm(self.payoff, S,self.K,self.T,self.r,sigma,self.muJ,self.sigJ,self.lam)
-
-        # Plot the 2D discrete color grid
-        plt.figure(figsize=(12, 8))
+                    values[i, j] = self.MertonClosedForm(self.payoff, S, self.K, self.T, self.r, sigma, self.muJ, self.sigJ, self.lam)
+        
+        # Create figure and axis
+        fig, ax = plt.subplots(figsize=(12, 8))
         cmap = plt.get_cmap('RdYlGn' if show_pl else 'viridis')  
-        plt.pcolormesh(S_grid, sigma_grid, values, cmap=cmap, shading='auto', edgecolors='k', linewidth=0.5)
-        plt.colorbar(label='Option Price' if not show_pl else 'P/L')
-
+        c = ax.pcolormesh(S_grid, sigma_grid, values, cmap=cmap, shading='auto', edgecolors='k', linewidth=0.5)
+        fig.colorbar(c, label='Option Price' if not show_pl else 'P/L')
+        
         # Annotate each cell with the value
         for i in range(S_grid.shape[0]):
             for j in range(S_grid.shape[1]):
-                plt.text(S_grid[i, j], sigma_grid[i, j], f'{values[i, j]:.2f}', ha='center', va='center', fontsize=8, color='black')
-
+                ax.text(S_grid[i, j], sigma_grid[i, j], f'{values[i, j]:.2f}', ha='center', va='center', fontsize=8, color='black')
+        
         # Add labels and title
-        plt.xlabel('Spot Price (S)')
-        plt.ylabel('Implied Volatility (sigma)')
-        plt.title(f"Option {'P/L' if show_pl else 'Price'} Color Grid ({self.payoff.capitalize()} Option)")
-        plt.show()
+        ax.set_xlabel('Spot Price (S)')
+        ax.set_ylabel('Implied Volatility (sigma)')
+        ax.set_title(f"Option {'P/L' if show_pl else 'Price'} Color Grid ({self.payoff.capitalize()} Option)")
+        
+        return fig  # Return the figure instead of showing it
     
     def calculate_greeks(self, n_max=50, print_=False):
         """
@@ -551,9 +580,81 @@ class Merton_pricer:
         }
         df = pd.DataFrame(data).set_index("Greek")
         return df
-        
 
-    
+    def plot_stockpaths(self, M=1000, N=10):
+        size = (M, N)
+        dt = self.T / M 
+        
+        poi_rv = np.multiply(
+            np.random.poisson(self.lam * dt, size=size),
+            np.random.normal(self.muJ, self.sigJ, size=size)
+        ).cumsum(axis=0)
+        
+        geo = np.cumsum(
+            ((self.r - self.sig**2 / 2 - self.lam * (self.muJ + self.sigJ**2 * 0.5)) * dt +
+            self.sig * np.sqrt(dt) * np.random.normal(size=size)), axis=0
+        )
+        
+        paths = np.exp(geo + poi_rv) * self.S0
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(paths)
+        ax.set_xlabel('Time Steps')
+        ax.set_ylabel('Asset Price')
+        ax.set_title(f'Merton Jump Diffusion Price Paths ({N} Paths)')
+
+        return fig
+
+    def plot_density(self,N=100000):
+        np.random.seed(seed=42)
+        W = ss.norm.rvs(0, 1, N)  # The normal RV vector
+        P = ss.poisson.rvs(self.lam * self.T, size=N)  # Poisson random vector
+        Jumps = np.asarray([ss.norm.rvs(self.muJ, self.sigJ, i).sum() for i in P])  # Jumps vector
+        X_T = self.r * self.T + np.sqrt(self.T) * self.sig * W + Jumps  # Merton process
+        cf_M_b = partial(cf_mert, t=self.T, mu=self.r, sig=self.sig, lam=self.lam, muJ=self.muJ, sigJ=self.sigJ)
+        x = np.linspace(X_T.min(), X_T.max(), 500)
+        y = np.linspace(-3, 5, 50)
+        
+        fig = plt.figure(figsize=(15, 6))
+        ax = fig.add_subplot(111)
+        ax.plot(x, Merton_pdf(x, self.T, self.r, self.sig, self.lam, self.muJ, self.sigJ), 
+                color="r", label="Merton density")
+        ax.plot(y, [Gil_Pelaez_pdf(i, cf_M_b, np.inf) for i in y], "p", label="Fourier inversion")
+        ax.hist(X_T, density=True, bins=200, facecolor="LightBlue", label="frequencies of X_T")
+        ax.legend()
+        ax.set_title("Merton Jump Diffusion Histogram")
+        return fig
+
+    def plot_qq(self, N=100000):
+        np.random.seed(seed=42)
+        W = ss.norm.rvs(0, 1, N)  # The normal RV vector
+        P = ss.poisson.rvs(self.lam * self.T, size=N)  # Poisson random vector
+        Jumps = np.asarray([ss.norm.rvs(self.muJ, self.sigJ, i).sum() for i in P])  # Jumps vector
+        X_T = self.r * self.T + np.sqrt(self.T) * self.sig * W + Jumps  # Merton process
+
+        # Compute statistics
+        median_val = np.median(X_T)
+        mean_val = np.mean(X_T)
+        std_val = np.std(X_T)
+        skew_val = ss.skew(X_T)
+        kurtosis_val = ss.kurtosis(X_T)
+        
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        qqplot(X_T, line="s", ax=ax)
+        ax.set_title("Merton Jump Diffusion Q-Q Plot")
+
+        # Add text with statistics to the plot
+        stats_text = (f"Median: {median_val:.4f}\n"
+                    f"Mean: {mean_val:.4f}\n"
+                    f"Std Dev: {std_val:.4f}\n"
+                    f"Skewness: {skew_val:.4f}\n"
+                    f"Kurtosis: {kurtosis_val:.4f}")
+
+        ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=10,
+                verticalalignment='top', bbox=dict(facecolor='white', alpha=0.5, edgecolor='black'))
+        return fig
+
 class Merton_process:
     """
     Class for the Merton process:
@@ -615,63 +716,17 @@ class process_info:
         self.sigJ = sigJ    # jump std
         self.exp_RV = exp_RV    # function to generate exponential Merton Random Variables
 
-class MertonCalibrator:
-    def __init__(self, Option_info, Process_info, mktPrice):
-        self.option_pricer = Merton_pricer(Option_info, Process_info)
-        self.strikes = np.array(mktPrice["Strike"])  # Convert to numpy array
-        self.maturities = np.array(mktPrice["T"])    # Convert to numpy array
-        self.market_prices = (np.array(mktPrice["Bid"]) + np.array(mktPrice["Ask"])) / 2  # Ensure it's an array
-
-    def objective_function(self, params):
-        """
-        Objective function for calibration.
-        params: [sig, muJ, sigJ, lam] - the parameters to calibrate
-        """
-        self.option_pricer.sig = params[0]  # Diffusion coefficient
-        self.option_pricer.muJ = params[1]  # Jump mean size
-        self.option_pricer.sigJ = params[2]  # Jump size volatility
-        self.option_pricer.lam = params[3]  # Jump intensity
-
-        model_prices = []
-        
-        for strike, maturity in zip(self.strikes, self.maturities):
-            self.option_pricer.T = maturity
-            model_price_vector = self.option_pricer.FFT([strike])  # Ensure FFT returns a single price
-            model_prices.append(model_price_vector[0])  # Extract only the relevant price
- 
-      
-        model_prices = np.array(model_prices).flatten()  # Flatten to match market_prices
-
-        # Ensure the shapes are identical
-        if model_prices.shape != self.market_prices.shape:
-            raise ValueError(f"Shape mismatch: model_prices {model_prices.shape}, market_prices {self.market_prices.shape}")
-
-        error = np.sum((model_prices - self.market_prices) ** 2)  # MSE error
-
-        return error
-
-    def calibrate(self):
-        """
-        Calibrate the model using optimization.
-        initial_guess: Initial guess for the parameters [sig, muJ, sigJ, lam]
-        """
-        bounds = ((0.01, np.inf) , (0.01, 2), (1e-5, np.inf) , (0, 5))
-        result = minimize(self.objective_function, [0.2, 0.1, 0.3, 0.8], method='Nelder-Mead', bounds=bounds)
-        return result.x  # Return calibrated parameters
-
-
-
 
 if __name__ == "__main__":
 
-    S0 = 3803.79      # Initial stock price
+    S0 = 100      # Initial stock price
     K = 110       # Strike price
     T = 1.0       # Time to maturity (1 year)
     r = 0.05      # Risk-free rate
-    sigma = 0.078707402989802   # Volatility of variance
-    muJ = 0.042669686369131266    # Jump Mean
-    sigJ = 1.0    # std dev of jumps
-    lam = 5     # jump activity
+    sigma = 0.2   # Volatility of variance
+    muJ = -0.15  # Jump Mean
+    sigJ = 0.5    # std dev of jumps
+    lam = 1.2     # jump activity
     N=100000
     
     strikes = [60, 140]
@@ -680,33 +735,16 @@ if __name__ == "__main__":
     Spots = [60,140]
     
     # Create option and process information
-    option_info = Option_param(S0, K, T,payoff="call")
+    option_info = Option_param(S0, K, T,payoff="put")
     MJD_process = process_info(r, sigma, lam,muJ,sigJ, Merton_process(r, sigma,lam,muJ,sigJ).exp_RV)
 
     pricer = Merton_pricer(option_info,MJD_process)
     # pricer.priceSurface(strikes,maturities)
-    pricer.plot_IV_surface(strikes,maturities)
+    # pricer.plot_IV_surface(strikes,maturities)
     
 
-
-    # Market prices observed (for example purposes, replace with real market data)
-    market_prices = [10, 8, 6, 4]  # Example market prices for different strikes
-    strikes = [90, 100, 110, 120]  # Example strike prices
-    maturities = [1, 1, 1, 1]  # Example maturities
-
-    # mktPrices = pd.read_csv("https://raw.githubusercontent.com/codearmo/data/master/calls_calib_example.csv")
-    # calibration = MertonCalibrator(option_info,MJD_process,mktPrices)
-
-    # Calibrate the model
-    
-    # start = dt.now()
-    # calibrated_params = calibration.calibrate()
-    # stop = dt.now()
-    # print(f"Calibrated parameters: \n sig: {calibrated_params[0]}, muJ: {calibrated_params[1]}, sigJ: {calibrated_params[2]}, lam: {calibrated_params[3]}")
-    # print(f"computation time: {stop - start}")
-    
-    
-
+    pricer.plot_density()
+    pricer.plot_qq()
 
 
 

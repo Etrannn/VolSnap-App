@@ -2,12 +2,11 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QVBoxLayout, 
     QWidget, QLabel, QLineEdit, QPushButton, 
-    QHBoxLayout, QMessageBox, QFileDialog,
-    QComboBox, QFormLayout, QStackedWidget,
-    QCheckBox, QDockWidget
+    QHBoxLayout, QMessageBox, QComboBox, 
+    QFormLayout, QStackedWidget, QCheckBox, 
+    QDockWidget, QDialog, 
 )
-
-# from PyQt5.QtGui import QStandardItem, QStandardItemModel
+from PyQt5.QtGui import QMovie
 import os
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -27,18 +26,106 @@ class VolSnap(QMainWindow):
     def __init__(self):
         super(VolSnap, self).__init__()
         self.setWindowTitle("VolSnap - Stochastic Model Visualiser")
-        self.resize(1200, 800)
+        self.resize(1400, 800)
+        self.darkStyleSheet = """
+            QMainWindow {
+                background-color: #001f3f;
+                color: white;
+            }
+            QWidget {
+                background-color: #001f3f;
+                color: white;
+            }
+            QDockWidget {
+                background-color: #001f3f;
+                color: white;
+                border: 1px solid #00509e;
+            }
+            QDockWidget::title {
+                text-align: center;
+                background-color: #003366;
+                padding: 4px;
+                border: 1px solid #00509e;
+            }
+            QLabel {
+                color: white;
+            }
+            QPushButton {
+                background-color: #003366;
+                color: white;
+                border: 1px solid #00509e;
+                border-radius: 4px;
+                padding: 6px;
+            }
+            QPushButton:hover {
+                background-color: #00509e;
+            }
+            QLineEdit, QComboBox {
+                background-color: #003366;
+                color: white;
+                border: 1px solid #00509e;
+            }
+            QStackedWidget {
+                background-color: #001f3f;
+            }
+        """
+        
+        self.lightStyleSheet = """
+            QMainWindow {
+                background-color: white;
+                color: black;
+            }
+            QWidget {
+                background-color: white;
+                color: black;
+            }
+            QDockWidget {
+                background-color: lightgray;
+                color: black;
+                border: 1px solid gray;
+            }
+            QDockWidget::title {
+                text-align: center;
+                background-color: gray;
+                padding: 4px;
+                border: 1px solid darkgray;
+            }
+            QLabel {
+                color: black;
+            }
+            QPushButton {
+                background-color: #e0e0e0;
+                color: black;
+                border: 1px solid gray;
+                border-radius: 4px;
+                padding: 6px;
+            }
+            QPushButton:hover {
+                background-color: #d0d0d0;
+            }
+            QLineEdit, QComboBox {
+                background-color: white;
+                color: black;
+                border: 1px solid gray;
+            }
+            QStackedWidget {
+                background-color: white;
+            }
+        """
+        
+        
+        self.setStyleSheet(self.lightStyleSheet)
 
-        # --- Central widget now contains only the chart ---
+
         central_widget = QWidget()
         central_layout = QVBoxLayout()
-        self.figure = QLabel("---CHART WILL BE HERE SOON---")
-        self.figure.setAlignment(Qt.AlignCenter)
+        self.figure = QStackedWidget()
+        self.visualList = []
+
         central_layout.addWidget(self.figure)
         central_widget.setLayout(central_layout)
         self.setCentralWidget(central_widget)
 
-        # --- Create a dock widget for Option Inputs (left side) ---
         dock_inputs = QDockWidget("Model Inputs", self)
         dock_inputs.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         dock_inputs.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
@@ -46,11 +133,10 @@ class VolSnap(QMainWindow):
         input_widget = QWidget()
         input_layout = QVBoxLayout()
 
-        # Create model selector and add items
         self.model_selector = QComboBox()
         self.model_selector.addItems([
             "Black Scholes Merton", 
-            "Bates(SVJ)", 
+            "Bates (SVJ)", 
             "Binomial", 
             "Heston", 
             "Merton Jump Diffusion", 
@@ -80,9 +166,15 @@ class VolSnap(QMainWindow):
 
         self.model_selector.currentIndexChanged.connect(self.stack.setCurrentIndex)
 
-        # Additional controls
-        self.timer = QCheckBox("Enable Timer")
-        input_layout.addWidget(self.timer)
+        
+        self.theme_switch = QCheckBox("Navy Blue Theme")
+        self.theme_switch.setChecked(False)  
+        self.theme_switch.toggled.connect(self.switchTheme)
+        input_layout.addWidget(self.theme_switch)
+        
+    
+        # self.timer = QCheckBox("Enable Timer")
+        # input_layout.addWidget(self.timer)
 
         self.calc_button = QPushButton("Calculate")
         self.calc_button.clicked.connect(self.calculate_option_price)
@@ -97,8 +189,7 @@ class VolSnap(QMainWindow):
 
         # Add the inputs dock widget to the left dock area
         self.addDockWidget(Qt.LeftDockWidgetArea, dock_inputs)
-
-        # --- Create a dock widget for Prices and Greeks ---
+        
         self.dock_prices_greeks = QDockWidget("Price and Greeks", self)
         self.dock_prices_greeks.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
         # Allow the dock widget to be placed at the top or bottom
@@ -114,11 +205,9 @@ class VolSnap(QMainWindow):
         self.dock_prices_greeks.setStyleSheet("font-size: 12px; font-weight: bold;")
         self.addDockWidget(Qt.BottomDockWidgetArea, self.dock_prices_greeks)
 
-        # --- Create a new dock widget for Visual Navigation (top right) ---
         self.dock_navigation = QDockWidget("", self)
         self.dock_navigation.setFeatures(QDockWidget.NoDockWidgetFeatures)
-        # self.dock_navigation.setFixedHeight(60)
-        # Allow this dock widget only at the top
+        
         self.dock_navigation.setAllowedAreas(Qt.TopDockWidgetArea)
         nav_widget = QWidget()
         nav_layout = QHBoxLayout()
@@ -133,14 +222,148 @@ class VolSnap(QMainWindow):
         nav_widget.setLayout(nav_layout)
         self.dock_navigation.setWidget(nav_widget)
         self.addDockWidget(Qt.TopDockWidgetArea, self.dock_navigation)
-
+    
+    def switchTheme(self, checked):
+        if checked:
+            self.setStyleSheet(self.darkStyleSheet)
+        else:
+            self.setStyleSheet(self.lightStyleSheet)
     def navigate_left(self):
-        # Stub function: implement functionality to scroll left through visuals
-        print("Navigating left")
+        """Switch to the previous visual."""
+        count = self.figure.count()
+        if count == 0:
+            print("No plots added - cannot cycle")
+        elif count:
+            current = self.figure.currentIndex()
+            self.figure.setCurrentIndex((current - 1) % count)
 
     def navigate_right(self):
-        # Stub function: implement functionality to scroll right through visuals
-        print("Navigating right")
+        """Switch to the next visual."""
+        count = self.figure.count()
+        if count == 0:
+            print("No plots added - cannot cycle")
+        elif count:
+            current = self.figure.currentIndex()
+            self.figure.setCurrentIndex((current + 1) % count)
+
+    def update_visuals(self, pricer, strikes, maturities):
+        self.clear_visuals()
+
+        canvases = []
+
+        try:
+            fig1 = pricer.priceSurface(strikes, maturities)
+            if fig1 is not None:
+                canvas1 = FigureCanvas(fig1)
+                canvases.append(canvas1)
+        except Exception as e:
+            print("Failed to create price surface plot:", e)
+
+        try:
+            fig2 = pricer.plot_IV_surface(strikes, maturities)  
+            if fig2 is not None:
+                canvas2 = FigureCanvas(fig2)
+                canvases.append(canvas2)
+        except Exception as e:
+            print("Failed to create IV surface plot:", e)
+
+        try:
+            fig3 = pricer.priceColorGrid(strikes, [.01, 1], num_S=15, num_sigma=15, show_pl=False)
+            if fig3 is not None:
+                canvas3 = FigureCanvas(fig3)
+                canvases.append(canvas3)
+        except Exception as e:
+            print("Failed to create price color grid plot (show_pl False):", e)
+
+        try:
+            fig4 = pricer.priceColorGrid(strikes, [.01, 1], num_S=15, num_sigma=15, show_pl=True)
+            if fig4 is not None:
+                canvas4 = FigureCanvas(fig4)
+                canvases.append(canvas4)
+        except Exception as e:
+            print("Failed to create price color grid plot (show_pl True):", e)
+
+        try:
+            fig5 = pricer.plot_stock_price_tree()
+            if fig5 is not None:
+                canvas5 = FigureCanvas(fig5)
+                canvases.append(canvas5)
+        except Exception as e:
+            print("Failed to create stock price tree plot:", e)
+
+        try:
+            fig6 = pricer.plot_option_price_tree()
+            if fig6 is not None:
+                canvas6 = FigureCanvas(fig6)
+                canvases.append(canvas6)
+        except Exception as e:
+            print("Failed to create option price tree plot:", e)
+        
+        try:
+            fig7 = pricer.plot_volatility_impact()
+            if fig7 is not None:
+                canvas7 = FigureCanvas(fig7)
+                canvases.append(canvas7)
+        except Exception as e:
+            print("Failed to create volatility impact plot:", e)
+        
+        try:
+            fig8 = pricer.plot_terminal_dist()
+            if fig8 is not None:
+                canvas8 = FigureCanvas(fig8)
+                canvases.append(canvas8)
+        except Exception as e:
+            print("Failed to create terminal dist plot:", e)
+        
+        try:
+            fig9 = pricer.plot_stockpaths()
+            if fig9 is not None:
+                canvas9 = FigureCanvas(fig9)
+                canvases.append(canvas9)
+        except Exception as e:
+            print("Failed to create stock paths plot:", e)
+        
+        try:
+            fig10 = pricer.plot_dist()
+            if fig10 is not None:
+                canvas10 = FigureCanvas(fig10)
+                canvases.append(canvas10)
+        except Exception as e:
+            print("Failed to create plot distribution:", e)
+        
+        try:
+            fig11 = pricer.plot_density()
+            if fig11 is not None:
+                canvas11 = FigureCanvas(fig11)
+                canvases.append(canvas11)
+        except Exception as e:
+            print("Failed to create plot density:", e)
+        
+        try:
+            fig12 = pricer.plot_qq()
+            if fig12 is not None:
+                canvas12 = FigureCanvas(fig12)
+                canvases.append(canvas12)
+        except Exception as e:
+            print("Failed to create plot density:", e)
+
+        # Add all successfully created canvases to the visuals list and the stacked widget.
+        for canvas in canvases:
+            self.visuals_list.append(canvas)
+            self.figure.addWidget(canvas)
+
+        if self.figure.count() > 0:
+            self.figure.setCurrentIndex(0)
+
+    def clear_visuals(self):
+        """
+        Remove all visual canvases from the QStackedWidget and empty the visuals list.
+        """
+        while self.figure.count() > 0:
+            widget = self.figure.widget(0)
+            self.figure.removeWidget(widget)
+            widget.deleteLater()
+        self.visuals_list = []
 
     def create_bsm_page(self):
         widget = QWidget()
@@ -156,6 +379,8 @@ class VolSnap(QMainWindow):
         layout.addRow("Risk-Free Rate (r):", self.bsm_inputs["r"])
         self.bsm_inputs["T"] = QLineEdit()
         layout.addRow("Time to Maturity (T):", self.bsm_inputs["T"])
+        self.bsm_inputs["N"] = QLineEdit()
+        layout.addRow("Number of MC simulations:", self.bsm_inputs["N"])
         self.bsm_inputs["payoff"] = QComboBox()
         self.bsm_inputs["payoff"].addItems(["call", "put"])
         layout.addRow("Option Type:", self.bsm_inputs["payoff"])
@@ -190,6 +415,8 @@ class VolSnap(QMainWindow):
         layout.addRow("Mean Jump Size (μ):", self.bates_inputs["muJ"])
         self.bates_inputs["delta"] = QLineEdit()
         layout.addRow("Volatility of Jump (δ):", self.bates_inputs["delta"])
+        self.bates_inputs["N"] = QLineEdit()
+        layout.addRow("Number of MC simulations:", self.bates_inputs["N"])
         self.bates_inputs["payoff"] = QComboBox()
         self.bates_inputs["payoff"].addItems(["call", "put"])
         layout.addRow("Option Type:", self.bates_inputs["payoff"])
@@ -243,6 +470,8 @@ class VolSnap(QMainWindow):
         layout.addRow("Mean Reversion Speed (k):", self.heston_inputs["kappa"])
         self.heston_inputs["rho"] = QLineEdit()
         layout.addRow("Correl. of Asset and Variance (ρ):", self.heston_inputs["rho"])
+        self.heston_inputs["N"] = QLineEdit()
+        layout.addRow("Number of MC simulations:", self.heston_inputs["N"])
         self.heston_inputs["payoff"] = QComboBox()
         self.heston_inputs["payoff"].addItems(["call", "put"])
         layout.addRow("Option Type:", self.heston_inputs["payoff"])
@@ -269,6 +498,8 @@ class VolSnap(QMainWindow):
         layout.addRow("Mean Jump Size (μ):", self.MJD_inputs["muJ"])
         self.MJD_inputs["sigJ"] = QLineEdit()
         layout.addRow("Volatility of Jump (δ):", self.MJD_inputs["sigJ"])
+        self.MJD_inputs["N"] = QLineEdit()
+        layout.addRow("Number of MC simulations:", self.MJD_inputs["N"])
         self.MJD_inputs["payoff"] = QComboBox()
         self.MJD_inputs["payoff"].addItems(["call", "put"])
         layout.addRow("Option Type:", self.MJD_inputs["payoff"])
@@ -293,6 +524,8 @@ class VolSnap(QMainWindow):
         layout.addRow("Drift of the Brownian motion (θ):", self.NIG_inputs["theta"])
         self.NIG_inputs["kappa"] = QLineEdit()
         layout.addRow("Variance of the Gamma process (k):", self.NIG_inputs["kappa"])
+        self.NIG_inputs["N"] = QLineEdit()
+        layout.addRow("Number of MC simulations:", self.NIG_inputs["N"])
         self.NIG_inputs["payoff"] = QComboBox()
         self.NIG_inputs["payoff"].addItems(["call", "put"])
         layout.addRow("Option Type:", self.NIG_inputs["payoff"])
@@ -317,6 +550,8 @@ class VolSnap(QMainWindow):
         layout.addRow("Drift of the Brownian motion (θ):", self.VG_inputs["theta"])
         self.VG_inputs["kappa"] = QLineEdit()
         layout.addRow("Variance of the Gamma process (k):", self.VG_inputs["kappa"])
+        self.VG_inputs["N"] = QLineEdit()
+        layout.addRow("Number of MC simulations:", self.VG_inputs["N"])
         self.VG_inputs["payoff"] = QComboBox()
         self.VG_inputs["payoff"].addItems(["call", "put"])
         layout.addRow("Option Type:", self.VG_inputs["payoff"])
@@ -324,6 +559,37 @@ class VolSnap(QMainWindow):
         return widget
 
     def calculate_option_price(self):
+        # Create a simple modal, frameless dialog as a loading indicator.
+        loading_dialog = QDialog(self)
+        loading_dialog.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
+        loading_dialog.setModal(True)
+        
+        # Set up a layout with a loading message.
+        loading_layout = QVBoxLayout()
+        loading_label = QLabel("Loading, please wait...")
+        loading_label.setAlignment(Qt.AlignCenter)
+        loading_layout.addWidget(loading_label)
+        
+        # # Optionally, add an animated spinner if you have an animated GIF:
+        # self.spinner_label = QLabel()
+        # movie_path = 
+        # self.movie = QMovie(movie_path)
+        # self.spinner_label.setMovie(self.movie)
+        # if not self.movie.isValid():
+        #     print(f"Failed to load GIF from {movie_path}")
+        # else:
+        #     self.spinner_label.setMovie(self.movie)
+        #     self.movie.start()
+        
+        # loading_layout.addWidget(self.spinner_label, alignment=Qt.AlignCenter)
+        
+        
+        loading_dialog.setLayout(loading_layout)
+        loading_dialog.resize(200, 100)
+        # Center the dialog over the main window
+        loading_dialog.move(self.geometry().center() - loading_dialog.rect().center())
+        loading_dialog.show()
+        QApplication.processEvents()
         model_index = self.model_selector.currentIndex()
         try:
             if model_index == 0:  # BSM Model
@@ -332,31 +598,45 @@ class VolSnap(QMainWindow):
                 sigma = float(self.bsm_inputs["sigma"].text())
                 r = float(self.bsm_inputs["r"].text())
                 T = float(self.bsm_inputs["T"].text())
+                N = int(self.bsm_inputs["N"].text())
                 payoff = self.bsm_inputs["payoff"].currentText()
-
+                
+                # --- Validate inputs for BSM ---
+                if S0 < 0 or K < 0 or T < 0 or sigma < 0 or N > 1000000:
+                    QMessageBox.critical(
+                        self,
+                        "Input Error",
+                        "For BSM, ensure S0, K, T, and sigma are nonnegative and N is at most 1,000,000."
+                    )
+                    loading_dialog.close()
+                    return
+                
                 option_info = blackScholesPricer.Option_param(S0=S0, K=K, T=T, payoff=payoff)
                 process_info_obj = blackScholesPricer.Diffusion_process(r=r, sig=sigma)
-
                 pricer = blackScholesPricer.BS_pricer(option_info, process_info_obj)
-
+                
                 Closedprice = pricer.closed_formula()
                 FIprice = pricer.Fourier_inversion()
                 FFTprice = pricer.FFT(K)
                 pdePrice, pdeTime = pricer.PDE_price(steps=(5000, 4000), Time=True, solver="splu")
                 LSMPrice = pricer.LSM(N=500, paths=5000)
+                MCPrice, stdErr, time_val = pricer.MC(N, True, True)
                 greek = pricer.calculate_greeks()
-
+                
                 self.prices.setText(
                     f"Closed-Form {payoff.capitalize()} Price: {Closedprice:.4f}\n"
                     f"Fourier Inversion {payoff.capitalize()} Price: {FIprice:.4f}\n"
                     f"FFT {payoff.capitalize()} Price: {FFTprice:.4f}\n"
                     f"PDE {payoff.capitalize()} Price: {pdePrice:.4f}\n"
-                    f"Longstaff-Schwartz {payoff.capitalize()} Price (American): {LSMPrice:.4f}"
+                    f"Longstaff-Schwartz {payoff.capitalize()} Price (American): {LSMPrice:.4f}\n"
+                    f"Monte Carlo {payoff.capitalize()} Price: {MCPrice[0]:.4f} +/- {stdErr[0]:.4f}\n"
+                    f"MC computation time: {time_val:.6f} secs"
                 )
                 self.greeks.setText(f"{greek}")
-
-                
-
+                strikes = [S0 - 40, S0 + 40]
+                maturities = [0.001, 3.0]
+                self.update_visuals(pricer, strikes, maturities)
+            
             elif model_index == 1:  # Bates Model
                 S0 = float(self.bates_inputs["S0"].text())
                 K = float(self.bates_inputs["K"].text())
@@ -370,23 +650,49 @@ class VolSnap(QMainWindow):
                 muJ = float(self.bates_inputs["muJ"].text())
                 delta = float(self.bates_inputs["delta"].text())
                 v0 = float(self.bates_inputs["v0"].text())
+                N = int(self.bates_inputs["N"].text())
                 payoff = self.bates_inputs["payoff"].currentText()
-
+                
+                # --- Validate inputs for Bates ---
+                if S0 < 0 or K < 0 or T < 0 or sigma < 0 or N > 1000000 or lam < 0 or lam > 5:
+                    QMessageBox.critical(
+                        self,
+                        "Input Error",
+                        "For Bates, ensure S0, K, T, and sigma are nonnegative, N is at most 1,000,000, and lam is between 0 and 5."
+                    )
+                    loading_dialog.close()
+                    return
+                
+                M = 1000
                 option_info = BatesPricer.Option_param(S0, K, T, v0, payoff=payoff)
                 Bates_process = BatesPricer.process_info(r, sigma, theta, kappa, rho, lam, muJ, delta)
-
                 pricer = BatesPricer.Bates_pricer(option_info, Bates_process)
                 if not pricer.check_feller_condition(kappa, theta, sigma):
-                    QMessageBox.critical(self, "Error", "The Feller condition is NOT satisfied.")
+                    reply = QMessageBox.question(
+                        self,
+                        "Feller Condition Warning",
+                        "The Feller condition is NOT satisfied.\nDo you wish to continue?",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.No:
+                        loading_dialog.close()
+                        return
                 FIprice = pricer.Fourier_inversion()
                 FFTprice = pricer.FFT(K)
+                MCPrice, stdErr, time_val = pricer.MC(M=N, N=M)
                 greeks = pricer.calculate_greeks()
-
+                
                 self.prices.setText(
                     f"Fourier Inversion {payoff.capitalize()} Price: {FIprice:.4f}\n"
-                    f"FFT {payoff.capitalize()} Price: {FFTprice:.4f}"
+                    f"FFT {payoff.capitalize()} Price: {FFTprice:.4f}\n"
+                    f"MC {payoff.capitalize()} Price: {MCPrice:.4f} +/- {stdErr:.4f}\n"
+                    f"Computation Time: {time_val:.6f}"
                 )
                 self.greeks.setText(f"{greeks}")
+                strikes = [S0 - 40, S0 + 40]
+                maturities = [0.1, 3.0]
+                self.update_visuals(pricer, strikes, maturities)
+            
             elif model_index == 2:  # Binomial Model
                 S0 = float(self.binomial_inputs["S0"].text())
                 K = float(self.binomial_inputs["K"].text())
@@ -396,15 +702,27 @@ class VolSnap(QMainWindow):
                 steps = int(self.binomial_inputs["Steps"].text())
                 payoff = self.binomial_inputs["payoff"].currentText()
                 style = self.binomial_inputs["style"].currentText()
+                
+                # --- Validate inputs for Binomial ---
+                if S0 < 0 or K < 0 or T < 0 or sigma < 0 or steps <= 0:
+                    QMessageBox.critical(
+                        self,
+                        "Input Error",
+                        "For Binomial, ensure S0, K, T, and sigma are nonnegative and Steps > 0."
+                    )
+                    loading_dialog.close()
+                    return
+                
                 pricer = BinomialPricer.BinomialPricer(S0, K, T, r, sigma, steps, payoff, style)
-
                 treePrice = pricer.price()
                 greeks = pricer.calculate_greeks()
-
-                self.prices.setText(
-                    f"Tree price {payoff.capitalize()} Price: {treePrice:.4f}"
-                )
+                
+                self.prices.setText(f"Tree price {payoff.capitalize()} Price: {treePrice:.4f}")
                 self.greeks.setText(f"{greeks}")
+                strikes = [S0 - 40, S0 + 40]
+                maturities = [0.1, 3.0]
+                self.update_visuals(pricer, strikes, maturities)
+            
             elif model_index == 3:  # Heston Model
                 S0 = float(self.heston_inputs["S0"].text())
                 K = float(self.heston_inputs["K"].text())
@@ -415,21 +733,48 @@ class VolSnap(QMainWindow):
                 theta = float(self.heston_inputs["theta"].text())
                 kappa = float(self.heston_inputs["kappa"].text())
                 rho = float(self.heston_inputs["rho"].text())
+                N = int(self.heston_inputs["N"].text())
                 payoff = self.heston_inputs["payoff"].currentText()
-
+                
+                # --- Validate inputs for Heston ---
+                if S0 < 0 or K < 0 or T < 0 or sigma < 0 or N > 1000000:
+                    QMessageBox.critical(
+                        self,
+                        "Input Error",
+                        "For Heston, ensure S0, K, T, and sigma are nonnegative and N is at most 1,000,000."
+                    )
+                    loading_dialog.close()
+                    return
+                
                 optionInfo = HestonModelPricer.Option_param(S0, K, T, v0, payoff=payoff)
                 HestonProcess = HestonModelPricer.process_info(r, sigma, theta, kappa, rho)
                 pricer = HestonModelPricer.Heston_pricer(optionInfo, HestonProcess)
                 if not pricer.check_feller_condition(kappa, theta, sigma):
-                    QMessageBox.critical(self, "Error", "The Feller condition is NOT satisfied.")
+                    reply = QMessageBox.question(
+                        self,
+                        "Feller Condition Warning",
+                        "The Feller condition is NOT satisfied.\nDo you wish to continue?",
+                        QMessageBox.Yes | QMessageBox.No
+                    )
+                    if reply == QMessageBox.No:
+                        loading_dialog.close()
+                        return
                 FIprice = pricer.Fourier_inversion()
                 FFTprice = pricer.FFT(K)
+                MCPrice, stdErr, time_val = pricer.MC(N, 1000, True, True)
                 greeks = pricer.calculate_greeks()
+                
                 self.prices.setText(
                     f"Fourier Inversion {payoff.capitalize()} Price: {FIprice:.4f}\n"
-                    f"FFT {payoff.capitalize()} Price: {FFTprice:.4f}"
+                    f"FFT {payoff.capitalize()} Price: {FFTprice:.4f}\n"
+                    f"Monte Carlo {payoff.capitalize()} Price: {MCPrice[0]:.4f} +/- {stdErr[0]:.4f}\n"
+                    f"MC computation time: {time_val:.6f} secs"
                 )
                 self.greeks.setText(f"{greeks}")
+                strikes = [S0 - 40, S0 + 40]
+                maturities = [0.1, 3.0]
+                self.update_visuals(pricer, strikes, maturities)
+            
             elif model_index == 4:  # MJD Model
                 S0 = float(self.MJD_inputs["S0"].text())
                 K = float(self.MJD_inputs["K"].text())
@@ -439,8 +784,19 @@ class VolSnap(QMainWindow):
                 lam = float(self.MJD_inputs["lam"].text())
                 muJ = float(self.MJD_inputs["muJ"].text())
                 sigJ = float(self.MJD_inputs["sigJ"].text())
+                N = int(self.MJD_inputs["N"].text())
                 payoff = self.MJD_inputs["payoff"].currentText()
-
+                
+                # --- Validate inputs for MJD ---
+                if S0 < 0 or K < 0 or T < 0 or sigma < 0 or N > 1000000 or lam < 0 or lam > 5:
+                    QMessageBox.critical(
+                        self,
+                        "Input Error",
+                        "For MJD, ensure S0, K, T, and sigma are nonnegative, N is at most 1,000,000, and lam is between 0 and 5."
+                    )
+                    loading_dialog.close()
+                    return
+                
                 optionInfo = MertonJumpDiffusionPricer.Option_param(S0, K, T, payoff=payoff)
                 processInfo = MertonJumpDiffusionPricer.process_info(
                     r,
@@ -451,20 +807,26 @@ class VolSnap(QMainWindow):
                     MertonJumpDiffusionPricer.Merton_process(r, sigma, lam, muJ, sigJ).exp_RV
                 )
                 pricer = MertonJumpDiffusionPricer.Merton_pricer(optionInfo, processInfo)
-
                 closedform = pricer.closed_formula()
                 FIprice = pricer.Fourier_inversion()
                 FFTprice = pricer.FFT(K)
                 pidePrice, pideTime = pricer.PIDE_price(steps=(5000, 4000), Time=True)
+                MCPrice, stdErr, time_val = pricer.MC(N, True, True)
                 greek = pricer.calculate_greeks()
-
+                
                 self.prices.setText(
                     f"Closed-Form {payoff.capitalize()} Price: {closedform:.4f}\n"
                     f"Fourier Inversion {payoff.capitalize()} Price: {FIprice:.4f}\n"
                     f"FFT {payoff.capitalize()} Price: {FFTprice:.4f}\n"
-                    f"PIDE {payoff.capitalize()} Price: {pidePrice:.4f}"
+                    f"PIDE {payoff.capitalize()} Price: {pidePrice:.4f}\n"
+                    f"Monte Carlo {payoff.capitalize()} Price: {MCPrice[0]:.4f} +/- {stdErr[0]:.4f}\n"
+                    f"MC computation time: {time_val:.6f} secs"
                 )
                 self.greeks.setText(f"{greek}")
+                strikes = [S0 - 40, S0 + 40]
+                maturities = [0.1, 3.0]
+                self.update_visuals(pricer, strikes, maturities)
+            
             elif model_index == 5:  # NIG Model
                 S0 = float(self.NIG_inputs["S0"].text())
                 K = float(self.NIG_inputs["K"].text())
@@ -473,8 +835,19 @@ class VolSnap(QMainWindow):
                 T = float(self.NIG_inputs["T"].text())
                 theta = float(self.NIG_inputs["theta"].text())
                 kappa = float(self.NIG_inputs["kappa"].text())
+                N = int(self.NIG_inputs["N"].text())
                 payoff = self.NIG_inputs["payoff"].currentText()
-
+                
+                # --- Validate inputs for NIG ---
+                if S0 < 0 or K < 0 or T < 0 or sigma < 0 or N > 1000000:
+                    QMessageBox.critical(
+                        self,
+                        "Input Error",
+                        "For NIG, ensure S0, K, T, and sigma are nonnegative and N is at most 1,000,000."
+                    )
+                    loading_dialog.close()
+                    return
+                
                 optionInfo = Normal_InverseGaussianPricer.Option_param(S0, K, T, payoff=payoff)
                 processInfo = Normal_InverseGaussianPricer.process_info(
                     r,
@@ -486,14 +859,22 @@ class VolSnap(QMainWindow):
                 pricer = Normal_InverseGaussianPricer.NIG_pricer(optionInfo, processInfo)
                 FIprice = pricer.Fourier_inversion()
                 FFTprice = pricer.FFT(K)
-                pidePrice, pideTime = pricer.PIDE_price((5000, 4000), Time=True)
+                pidePrice, pideTime = pricer.PIDE_price(steps=(5000, 4000), Time=True)
+                MCPrice, stdErr, time_val = pricer.MC(N, True, True)
                 greek = pricer.calculate_greeks()
+                
                 self.prices.setText(
                     f"Fourier Inversion {payoff.capitalize()} Price: {FIprice:.4f}\n"
                     f"FFT {payoff.capitalize()} Price: {FFTprice:.4f}\n"
-                    f"PIDE {payoff.capitalize()} Price: {pidePrice:.4f}"
+                    f"PIDE {payoff.capitalize()} Price: {pidePrice:.4f}\n"
+                    f"Monte Carlo {payoff.capitalize()} Price: {MCPrice:.4f} +/- {stdErr[0]:.4f}\n"
+                    f"MC computation time: {time_val:.6f} secs"
                 )
                 self.greeks.setText(f"{greek}")
+                strikes = [S0 - 40, S0 + 40]
+                maturities = [0.1, 3.0]
+                self.update_visuals(pricer, strikes, maturities)
+            
             elif model_index == 6:  # VG Model
                 S0 = float(self.VG_inputs["S0"].text())
                 K = float(self.VG_inputs["K"].text())
@@ -502,8 +883,19 @@ class VolSnap(QMainWindow):
                 T = float(self.VG_inputs["T"].text())
                 theta = float(self.VG_inputs["theta"].text())
                 kappa = float(self.VG_inputs["kappa"].text())
+                N = int(self.VG_inputs["N"].text())
                 payoff = self.VG_inputs["payoff"].currentText()
-
+                
+                # --- Validate inputs for VG ---
+                if S0 < 0 or K < 0 or T < 0 or sigma < 0 or N > 1000000:
+                    QMessageBox.critical(
+                        self,
+                        "Input Error",
+                        "For VG, ensure S0, K, T, and sigma are nonnegative and N is at most 1,000,000."
+                    )
+                    loading_dialog.close()
+                    return
+                
                 optionInfo = VarianceGammaPricer.Option_param(S0, K, T, payoff=payoff)
                 processInfo = VarianceGammaPricer.process_info(
                     r,
@@ -515,19 +907,26 @@ class VolSnap(QMainWindow):
                 pricer = VarianceGammaPricer.VG_pricer(optionInfo, processInfo)
                 FIprice = pricer.Fourier_inversion()
                 FFTprice = pricer.FFT(K)
-                pidePrice, pideTime = pricer.PIDE_price((5000, 4000), Time=True)
+                pidePrice, pideTime = pricer.PIDE_price(steps=(5000, 4000), Time=True)
+                MCPrice, stdErr, time_val = pricer.MC(N, True, True)
                 greek = pricer.calculate_greeks()
+                
                 self.prices.setText(
                     f"Fourier Inversion {payoff.capitalize()} Price: {FIprice:.4f}\n"
                     f"FFT {payoff.capitalize()} Price: {FFTprice:.4f}\n"
-                    f"PIDE {payoff.capitalize()} Price: {pidePrice:.4f}"
+                    f"PIDE {payoff.capitalize()} Price: {pidePrice:.4f}\n"
+                    f"Monte Carlo {payoff.capitalize()} Price: {MCPrice[0]:.4f} +/- {stdErr[0]:.4f}\n"
+                    f"MC computation time: {time_val:.6f} secs"
                 )
                 self.greeks.setText(f"{greek}")
+                strikes = [S0 - 40, S0 + 40]
+                maturities = [0.1, 3.0]
+                self.update_visuals(pricer, strikes, maturities)
             else:
                 self.figure.setText("Pricing not implemented for the selected model yet.")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"An error occurred:\n{str(e)}")
-
+        loading_dialog.close()
 
     def reset_app(self):
         self.model_selector.setCurrentIndex(0)
@@ -549,7 +948,7 @@ class VolSnap(QMainWindow):
                 elif isinstance(widget, QComboBox):
                     widget.setCurrentIndex(0)
 
-        self.figure.setText("---CHART WILL BE HERE SOON---")
+        self.clear_visuals()
         self.prices.setText("---PRICE INFO---")
         self.greeks.setText("---GREEKS INFO---")
 
@@ -558,12 +957,3 @@ if __name__ == "__main__":
     window = VolSnap()
     window.show()
     sys.exit(app.exec_())
-
-
-
-
-
-
-
-
-

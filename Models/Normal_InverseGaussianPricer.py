@@ -10,7 +10,9 @@ import scipy.stats as ss
 import scipy.special as scps
 import matplotlib.pyplot as plt
 from functools import partial
-from prereq import fft_Lewis, IV_from_Lewis, Q1, Q2
+from scipy.ndimage import gaussian_filter
+from statsmodels.graphics.gofplots import qqplot
+from prereq import fft_Lewis, IV_from_Lewis, Q1, Q2, Gil_Pelaez_pdf,NIG_pdf
 
 def cf_NIG(u, t=1, mu=0, theta=-0.1, sigma=0.2, kappa=0.1):
     """
@@ -104,7 +106,7 @@ class NIG_pricer:
         t_init = time()
 
         S_T = self.exp_RV(self.S0, self.T, N)
-        V = scp.mean(np.exp(-self.r * self.T) * self.payoff_f(S_T))
+        V = np.mean(np.exp(-self.r * self.T) * self.payoff_f(S_T))
 
         if Err is True:
             if Time is True:
@@ -288,7 +290,7 @@ class NIG_pricer:
             for j in range(num_T):
                 self.K = K_values[i]
                 self.T = T_values[j]
-                price_surface[j, i] = self.FFT(K)
+                price_surface[j, i] = self.FFT(self.K)
         
         # Plotting the surface
         fig = plt.figure(figsize=(10, 7))
@@ -300,7 +302,8 @@ class NIG_pricer:
         ax.set_zlabel('Option Price')
         ax.set_title(f'Normal Inverse Gaussian Model {self.payoff.capitalize()} Option Price Surface')
         
-        plt.show()
+        # plt.show()
+        return fig
     
     def plot_IV_surface(self, K_range, T_range,num_K=10,num_T=10):
         """
@@ -322,9 +325,37 @@ class NIG_pricer:
             for j in range(num_T):
                 self.K = K_values[i]
                 self.T = T_values[j]
-                price_surface[j, i] = self.IV_Lewis()
+                iv_value = self.IV_Lewis()
+                price_surface[j, i] = np.nan if iv_value == -1 or iv_value < 0 else iv_value
+            
+        # Smoothing: for each interior cell (i.e. not on an edge),
+        # if the IV value is too far from the average of its nonzero neighbors, then replace it.
+        tol = 0.001  # tolerance threshold; adjust this value as needed
+        for j in range(1, num_T - 1):
+            for i in range(1, num_K - 1):
+                cell_val = price_surface[j, i]
+                # Get immediate neighbors: up, down, left, right.
+                neighbors = [
+                    price_surface[j-1, i],
+                    price_surface[j+1, i],
+                    price_surface[j, i-1],
+                    price_surface[j, i+1]
+                ]
+                # Filter out neighbors that are zero or NaN.
+                valid_neighbors = [v for v in neighbors if v != 0 and not np.isnan(v)]
+                if valid_neighbors:
+                    neighbor_avg = np.mean(valid_neighbors)
+                    # If the difference is too large, replace the cell value.
+                    if abs(cell_val - neighbor_avg) > tol:
+                        price_surface[j, i] = neighbor_avg
+            price_surface = gaussian_filter(price_surface, sigma=0.75)
+        valid_vals = price_surface[~np.isnan(price_surface)]
         
-        # Plotting the surface
+        if valid_vals.size > 0:
+            zmin = np.percentile(valid_vals, 0.01)  
+            zmax = np.percentile(valid_vals, 99.99) 
+         
+        # Create the 3D plot.
         fig = plt.figure(figsize=(10, 7))
         ax = fig.add_subplot(111, projection='3d')
         ax.plot_surface(K_grid, T_grid, price_surface, cmap='viridis')
@@ -332,9 +363,60 @@ class NIG_pricer:
         ax.set_xlabel('Strike Price (K)')
         ax.set_ylabel('Time to Maturity (T)')
         ax.set_zlabel('Implied Volatility')
-        ax.set_title(f'Normal Inverse Gaussian Implied Volatility Surface')
-        plt.show()
+        ax.set_title('Normal Inverse Gaussian Implied Volatility Surface')
+        ax.set_zlim(zmin, zmax)
+       
+    
+        # plt.show()
+        return fig
 
+    def plot_density(self,N=100000):
+        lam = self.T**2 / self.kappa  # scale
+        mus = self.T / lam  # scaled mu
+        IG = ss.invgauss.rvs(mu=mus, scale=lam, size=N)  # The IG RV
+        Norm = ss.norm.rvs(0, 1, N)  # The normal RV
+        X = self.theta * IG + self.sigma * np.sqrt(IG) * Norm
+        cf_NIG_b = partial(cf_NIG, t=self.T, mu=0, theta=self.theta, sigma=self.sigma, kappa=self.kappa)
+        x = np.linspace(X.min(), X.max(), 500)
+        y = np.linspace(-2, 1, 30)
+
+        fig = plt.figure(figsize=(16, 5))
+        ax = fig.add_subplot(111)
+        ax.plot(x, NIG_pdf(x, self.T, 0, self.theta, self.sigma, self.kappa), color="r", label="NIG density")
+        ax.plot(y, [Gil_Pelaez_pdf(i, cf_NIG_b, np.inf) for i in y], "p", label="Fourier inversion")
+        ax.hist(X, density=True, bins=200, facecolor="LightBlue", label="frequencies of X")
+        ax.legend()
+        ax.set_title("Normal Inverse Gaussian Histogram")
+        return fig
+            
+    def plot_qq(self,N=100000):
+        lam = self.T**2 / self.kappa  # scale
+        mus = self.T / lam  # scaled mu
+        IG = ss.invgauss.rvs(mu=mus, scale=lam, size=N)  # The IG RV
+        Norm = ss.norm.rvs(0, 1, N)  # The normal RV
+        X = self.theta * IG + self.sigma * np.sqrt(IG) * Norm
+        # Compute statistics
+        median_val = np.median(X)
+        mean_val = np.mean(X)
+        std_val = np.std(X)
+        skew_val = ss.skew(X)
+        kurtosis_val = ss.kurtosis(X)
+        
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        qqplot(X, line="s", ax=ax)
+        ax.set_title("Normal Inverse Gaussian  Q-Q Plot")
+
+        # Add text with statistics to the plot
+        stats_text = (f"Median: {median_val:.4f}\n"
+                    f"Mean: {mean_val:.4f}\n"
+                    f"Std Dev: {std_val:.4f}\n"
+                    f"Skewness: {skew_val:.4f}\n"
+                    f"Kurtosis: {kurtosis_val:.4f}")
+
+        ax.text(0.05, 0.95, stats_text, transform=ax.transAxes, fontsize=10,
+                verticalalignment='top', bbox=dict(facecolor='white', alpha=0.5, edgecolor='black'))
+        return fig
 
     def calculate_greeks(self, h=1e-4):
         orig_S0   = self.S0
@@ -469,7 +551,9 @@ if __name__ == "__main__":
     NIGprocess = process_info(r, sigma, theta, kappa, NIG_process(r, sigma,theta, kappa).exp_RV)
 
     pricer = NIG_pricer(option_info,NIGprocess)
-    print(pricer.calculate_greeks())
+    # print(pricer.calculate_greeks())
+    # pricer.priceSurface(strikes,maturities)
     # pricer.plot_IV_surface(strikes,maturities)
 
+    print(pricer.MC(N,True,True))
 

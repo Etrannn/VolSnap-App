@@ -4,54 +4,59 @@ An application that outputs various pricing methods, greeks and plots of various
 Credit to cantaro86 for BSM, Heston, Merton, VG and NG pricing models
 
 ### Current models:
-- BSM model: 
 
-Methods -> Analytical closed solution, Fourier Inversion, FFT, PDE, Longstaff-Schwartz, MC 
+#### BSM model: 
 
-Features -> Price surface, IV Surface, Option price & P/L Heat map, Greeks, Stock Path simulations
+- Methods: Analytical closed solution, Fourier Inversion, FFT, PDE, Longstaff-Schwartz, MC 
 
-- Bates (SVJ) Model:
+- Features: Price surface, IV Surface, Option price & P/L Heat map, Greeks, Stock Path simulations
 
-Methods ->  Fourier Inversion, FFT, MC
+#### Bates (SVJ) Model:
 
-Features -> Price surface, IV Surface, Option price & P/L Heat map, Greeks, Stock Path simulations
+- Methods:  Fourier Inversion, FFT, MC
 
-- Binomial (CRR) Model:
+- Features:  Price surface, IV Surface, Option price & P/L Heat map, Greeks, Stock Path simulations
 
-Methods -> Tree method
+#### Binomial (CRR) Model:
 
-Features -> Stock Price Tree, Option Price Tree, Volatility Impact on Option Price 
+- Methods: Tree method
 
-- Heston Model:
+- Features: Stock Price Tree, Option Price Tree, Volatility Impact on Option Price 
 
-Methods ->  Fourier Inversion, FFT, MC
+#### Heston Model:
 
-Features -> Price surface, IV Surface, Option price & P/L Heat map, Greeks, Stock Path simulations
+- Methods:  Fourier Inversion, FFT, MC
+
+- Features: Price surface, IV Surface, Option price & P/L Heat map, Greeks, Stock Path simulations
 
 
-- Merton jump diffusion: 
+#### Merton Jump Diffusion: 
 
-Methods -> Analytical closed solution, Fourier Inversion, FFT, PIDE, MC 
+- Methods: Analytical closed solution, Fourier Inversion, FFT, PIDE, MC 
 
-Features -> Price surface, IV Surface, Option price & P/L Heat map, Greeks, Stock Path simulations
+- Features: Price surface, IV Surface, Option price & P/L Heat map, Greeks, Stock Path simulations
 
-- Normal Inverse Gaussian Model:
+#### Normal Inverse Gaussian Model:
 
-Methods -> Fourier Inversion, FFT, PIDE, MC
+- Methods: Fourier Inversion, FFT, PIDE, MC
 
-Features -> Price surface, IV Surface, Greeks, Stock Path simulations
+- Features: Price surface, IV Surface, Greeks, Stock Path simulations
 
-- Variance Gamma Model:
+#### Variance Gamma Model:
 
-Methods -> Fourier Inversion, FFT, PIDE, MC
+- Methods: Fourier Inversion, FFT, PIDE, MC
 
-Features -> Price surface, IV Surface, Greeks, Stock Path simulations
+- Features: Price surface, IV Surface, Greeks, Stock Path simulations
 
 
 ### WIP
+- Current Issues: Some parameters will result in implied volatility surface plot not loading
 
-IR models and pricing IR derivatives (IR swaps, swaptions, caps/floors, etc.): 
+- IR models and pricing IR derivatives (IR swaps, swaptions, caps/floors, etc.): Vasicek Model, CIR Model, Hull-White 
 
-Vasicek Model, CIR Model, Hull-White 
+<img src="C:\Users\61430\Pictures\Screenshots\Screenshot 2025-02-11 081206.png" alt="My Image" width="400">
+<img src="C:\Users\61430\Pictures\Screenshots\Screenshot 2025-02-11 081306.png" alt="My Image" width="400">
+<img src="C:\Users\61430\Pictures\Screenshots\Screenshot 2025-02-11 081548.png" alt="My Image" width="400">
+
 
 

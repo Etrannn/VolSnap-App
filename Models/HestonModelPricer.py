@@ -5,6 +5,8 @@ import scipy.stats as ss
 from functools import partial
 import time 
 import pandas as pd
+from matplotlib.figure import Figure
+from scipy.ndimage import gaussian_filter
 from prereq import fft_Lewis, IV_from_Lewis, Q1, Q2
 
 
@@ -122,6 +124,37 @@ class Heston_pricer:
             return put
         else:
             raise ValueError("invalid type. Set 'call' or 'put'")
+        
+    def Fourier_inversion_manual(self,S0,K,T,r,v0,theta,kappa,sigma,rho,payoff):
+        """
+        Price obtained by inversion of the characteristic function
+        """
+        k = np.log(K / S0)  # log moneyness
+        cf_H_b_good = partial(
+            cf_Heston_good,
+            t=T,
+            v0=v0,
+            mu=r,
+            theta=theta,
+            sigma=sigma,
+            kappa=kappa,
+            rho=rho,
+        )
+
+        limit_max = 2000  # right limit in the integration
+
+        if payoff == "call":
+            call = S0 * Q1(k, cf_H_b_good, limit_max) - K * np.exp(-r * T) * Q2(
+                k, cf_H_b_good, limit_max
+            )
+            return call
+        elif payoff == "put":
+            put = K * np.exp(-r * T) * (1 - Q2(k, cf_H_b_good, limit_max)) - S0 * (
+                1 - Q1(k, cf_H_b_good, limit_max)
+            )
+            return put
+        else:
+            raise ValueError("invalid type. Set 'call' or 'put'")
 
     def FFT(self, K):
         """
@@ -233,7 +266,7 @@ class Heston_pricer:
             for j in range(num_T):
                 self.K = K_values[i]
                 self.T = T_values[j]
-                price_surface[j, i] = self.FFT(K)
+                price_surface[j, i] = self.FFT(self.K)
         
         # Plotting the surface
         fig = plt.figure(figsize=(10, 7))
@@ -245,8 +278,8 @@ class Heston_pricer:
         ax.set_zlabel('Option Price')
         ax.set_title(f'Heston Model {self.payoff.capitalize()} Option Price Surface')
         
-        plt.show()
-    
+        # plt.show()
+        return fig
     
     def plot_IV_surface(self, K_range, T_range,num_K=10,num_T=10):
         """
@@ -268,9 +301,39 @@ class Heston_pricer:
             for j in range(num_T):
                 self.K = K_values[i]
                 self.T = T_values[j]
-                price_surface[j, i] = self.IV_Lewis()
+                iv_value = self.IV_Lewis()
+                price_surface[j, i] = np.nan if iv_value == -1 or iv_value < 0 else iv_value
+            
+        # Smoothing: for each interior cell (i.e. not on an edge),
+        # if the IV value is too far from the average of its nonzero neighbors, then replace it.
+        tol = 1e-9  # tolerance threshold; adjust this value as needed
+        for j in range(1, num_T - 1):
+            for i in range(1, num_K - 1):
+                cell_val = price_surface[j, i]
+                # Get immediate neighbors: up, down, left, right.
+                neighbors = [
+                    price_surface[j-1, i],
+                    price_surface[j+1, i],
+                    price_surface[j, i-1],
+                    price_surface[j, i+1]
+                ]
+                # Filter out neighbors that are zero or NaN.
+                valid_neighbors = [v for v in neighbors if v != 0 and not np.isnan(v)]
+                if valid_neighbors:
+                    neighbor_avg = np.mean(valid_neighbors)
+                    # If the difference is too large, replace the cell value.
+                    if abs(cell_val - neighbor_avg) > tol:
+                        price_surface[j, i] = neighbor_avg
+            
+            price_surface = gaussian_filter(price_surface, sigma=0.75)
         
-        # Plotting the surface
+        valid_vals = price_surface[~np.isnan(price_surface)]
+        
+        if valid_vals.size > 0:
+            zmin = np.percentile(valid_vals, 0.01)  
+            zmax = np.percentile(valid_vals, 99.99) 
+         
+        # Create the 3D plot.
         fig = plt.figure(figsize=(10, 7))
         ax = fig.add_subplot(111, projection='3d')
         ax.plot_surface(K_grid, T_grid, price_surface, cmap='viridis')
@@ -278,8 +341,95 @@ class Heston_pricer:
         ax.set_xlabel('Strike Price (K)')
         ax.set_ylabel('Time to Maturity (T)')
         ax.set_zlabel('Implied Volatility')
-        ax.set_title(f'Heston Model Implied Volatility Surface')
-        plt.show()
+        ax.set_title('Heston Model Implied Volatility Surface')
+        ax.set_zlim(zmin, zmax)
+       
+    
+        # plt.show()
+        return fig
+
+    
+    def priceColorGrid(self, S_range, sigma_range,num_S=15,num_sigma=15, show_pl=False):
+        """
+        Generate a discrete color grid of European option prices or P/L using the Bates model, with values displayed on each cell.
+        """
+        S_values = np.linspace(S_range[0], S_range[1], num_S)
+        sigma_values = np.linspace(sigma_range[0], sigma_range[1], num_sigma)
+
+        # Create a meshgrid for spot prices and volatilities
+        S_grid, sigma_grid = np.meshgrid(S_values, sigma_values)
+
+        # Compute option prices or P/L for each combination of S and sigma
+        values = np.zeros_like(S_grid, dtype=float)
+        for i in range(S_grid.shape[0]):
+            for j in range(S_grid.shape[1]):
+                S = S_grid[i, j]
+                nu = sigma_grid[i, j]
+                if show_pl:
+                    # Compute P/L as the difference between price and intrinsic value
+                    intrinsic_value = max(0, (S - self.K) if self.payoff == 'call' else (self.K - S))
+                    values[i, j] = self.Fourier_inversion_manual(
+                        S,
+                        self.K,
+                        self.T,
+                        self.r,
+                        nu,
+                        self.theta,
+                        self.kappa,
+                        self.sigma,
+                        self.rho,
+                        self.payoff
+                    ) - intrinsic_value
+                else:
+                    # Get the price
+                    values[i, j] = self.Fourier_inversion_manual(
+                        S,
+                        self.K,
+                        self.T,
+                        self.r,
+                        nu,
+                        self.theta,
+                        self.kappa,
+                        self.sigma,
+                        self.rho,
+                        self.payoff
+                    )
+
+        # # Plot the 2D discrete color grid
+        # plt.figure(figsize=(12, 8))
+        # cmap = plt.get_cmap('RdYlGn' if show_pl else 'viridis')  
+        # plt.pcolormesh(S_grid, sigma_grid, values, cmap=cmap, shading='auto', edgecolors='k', linewidth=0.5)
+        # plt.colorbar(label='Option Price' if not show_pl else 'P/L')
+
+        # # Annotate each cell with the value
+        # for i in range(S_grid.shape[0]):
+        #     for j in range(S_grid.shape[1]):
+        #         plt.text(S_grid[i, j], sigma_grid[i, j], f'{values[i, j]:.2f}', ha='center', va='center', fontsize=8, color='black')
+
+        # # Add labels and title
+        # plt.xlabel('Spot Price (S)')
+        # plt.ylabel('Implied Volatility (sigma)')
+        # plt.title(f"Option {'P/L' if show_pl else 'Price'} Color Grid ({self.payoff.capitalize()} Option)")
+        # plt.show()
+        
+        fig = Figure(figsize=(12, 8))
+        ax = fig.add_subplot(111)
+        cmap = plt.get_cmap('RdYlGn' if show_pl else 'viridis')
+        pcm = ax.pcolormesh(S_grid, sigma_grid, values, cmap=cmap,
+                            shading='auto', edgecolors='k', linewidth=0.5)
+        
+        fig.colorbar(pcm, ax=ax, label='Option Price' if not show_pl else 'P/L')
+        
+        for i in range(S_grid.shape[0]):
+            for j in range(S_grid.shape[1]):
+                ax.text(S_grid[i, j], sigma_grid[i, j], f'{values[i, j]:.2f}',
+                        ha='center', va='center', fontsize=8, color='black')
+        
+        ax.set_xlabel('Spot Price (S)')
+        ax.set_ylabel('Implied Instantanous Volatility (v0)')
+        ax.set_title(f"Option {'P/L' if show_pl else 'Price'} Color Grid ({self.payoff.capitalize()} Option)")
+        
+        return fig
 
     def check_feller_condition(self,kappa,theta,sigma):
         """
@@ -324,6 +474,67 @@ class Heston_pricer:
         }
 
         return pd.DataFrame(data)
+    
+    def plot_stockpaths(self, N=1000, M=10):
+        dt = self.T / N
+        mu = np.array([0, 0])
+        cov = np.array([[1, self.rho], [self.rho, 1]])
+
+        # Arrays for storing simulated prices and variances
+        S = np.full((N + 1, M), self.S0, dtype=np.float64)
+        v = np.full((N + 1, M), self.v0, dtype=np.float64)
+
+        # Sampling correlated Brownian motions under the risk-neutral measure
+        Z = np.random.multivariate_normal(mu, cov, (N, M))
+
+        for i in range(1, N + 1):
+            S[i] = S[i - 1] * np.exp((self.r - 0.5 * v[i - 1]) * dt + np.sqrt(v[i - 1] * dt) * Z[i - 1, :, 0])
+            v[i] = np.maximum(v[i - 1] + self.kappa * (self.theta - v[i - 1]) * dt + self.sigma * np.sqrt(v[i - 1] * dt) * Z[i - 1, :, 1], 0)
+        
+        fig_paths = plt.figure(figsize=(12, 6))
+        # Left subplot: asset price paths
+        ax1 = fig_paths.add_subplot(1, 2, 1)
+        ax1.plot(S[:, :M])
+        ax1.set_title(f'Heston Model Price Paths ({M} paths)')
+        ax1.set_xlabel('Time Steps')
+        ax1.set_ylabel('Asset Price')
+        
+        # Right subplot: variance paths
+        ax2 = fig_paths.add_subplot(1, 2, 2)
+        ax2.plot(v[:, :M])
+        ax2.set_title(f'Heston Variance Process ({M} paths)')
+        ax2.set_xlabel('Time Steps')
+        ax2.set_ylabel('Variance')
+        
+        fig_paths.tight_layout()
+        return fig_paths
+    
+    def plot_dist(self, N=1000, M=10000):
+        dt = self.T / N
+        mu = np.array([0, 0])
+        cov = np.array([[1, self.rho], [self.rho, 1]])
+
+        # Arrays for storing simulated prices and variances
+        S = np.full((N + 1, M), self.S0, dtype=np.float64)
+        v = np.full((N + 1, M), self.v0, dtype=np.float64)
+
+        # Sampling correlated Brownian motions under the risk-neutral measure
+        Z = np.random.multivariate_normal(mu, cov, (N, M))
+
+        for i in range(1, N + 1):
+            S[i] = S[i - 1] * np.exp((self.r - 0.5 * v[i - 1]) * dt + np.sqrt(v[i - 1] * dt) * Z[i - 1, :, 0])
+            v[i] = np.maximum(v[i - 1] + self.kappa * (self.theta - v[i - 1]) * dt + self.sigma * np.sqrt(v[i - 1] * dt) * Z[i - 1, :, 1], 0)
+        
+        gbm = self.S0 * np.exp((self.r - self.theta**2 / 2) * self.T + np.sqrt(self.theta * self.T) * np.random.normal(0, 1, M))
+        fig_dist, ax = plt.subplots(figsize=(8, 5))
+        # Use seaborn's kdeplot to plot densities.
+        sns.kdeplot(S[-1], label=f"rho={self.rho}", ax=ax)
+        sns.kdeplot(gbm, label="GBM", ax=ax)
+        ax.set_title('Asset Price Density under Heston Model')
+        ax.set_xlabel('$S_T$')
+        ax.set_ylabel('Density')
+        ax.legend()
+        return fig_dist
 
 class HestonMCPricer:
     """
@@ -530,8 +741,6 @@ if __name__ == "__main__":
     maturities = [0.1, 3.0]
 
     # print(pricer.calculate_greeks())
-
-    
 
     # pricer.priceSurface(strikes,maturities)
     pricer.plot_IV_surface(strikes,maturities)

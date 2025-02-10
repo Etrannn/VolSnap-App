@@ -12,6 +12,8 @@ from scipy.linalg.lapack import get_lapack_funcs
 from scipy.linalg import LinAlgError
 from scipy.stats import norm
 from prereq import fft_Lewis, IV_from_Lewis, Q1, Q2
+from matplotlib.figure import Figure
+
 from blackScholesMCPricer import BlackScholesMCPricer
 
 
@@ -234,13 +236,9 @@ class BS_pricer:
             mu=(self.r - 0.5 * self.sig**2) * self.T,
             sig=self.sig * np.sqrt(self.T),
         )  # function binding
-        if self.payoff == "call":
-            return IV_from_Lewis(self.K, self.S0, self.T, self.r, cf_GBM)
-        elif self.payoff == "put":
-            raise NotImplementedError
-        else:
-            raise ValueError("invalid type. Set 'call' or 'put'")
-
+        
+        return IV_from_Lewis(self.K, self.S0, self.T, self.r, cf_GBM)
+        
     def MC(self, N, Err=False, Time=False):
         """
         BS Monte Carlo
@@ -403,7 +401,7 @@ class BS_pricer:
                 for j in range(num_T):
                     self.K = K_values[i]
                     self.T = T_values[j]
-                    price_surface[j, i] = self.FFT(K)
+                    price_surface[j, i] = self.FFT(self.K)
             
             # Plotting the surface
             fig = plt.figure(figsize=(10, 7))
@@ -415,9 +413,10 @@ class BS_pricer:
             ax.set_zlabel('Option Price')
             ax.set_title(f'Black Scholes Model {self.payoff.capitalize()} Option Price Surface')
             
-            plt.show()
+            # plt.show()
+            return fig
 
-    def plot_IV_surface(pricer, K_range, T_range,num_K=10,num_T=10):
+    def plot_IV_surface(self, K_range, T_range,num_K=10,num_T=10):
         """
         Plot IV surface for different strikes and maturities.
         
@@ -435,9 +434,11 @@ class BS_pricer:
         
         for i in range(num_K):
             for j in range(num_T):
-                pricer.K = K_values[i]
-                pricer.T = T_values[j]
-                price_surface[j, i] = pricer.IV_Lewis()
+                self.K = K_values[i]
+                self.T = T_values[j]
+                price_surface[j, i] = self.IV_Lewis()
+        
+        
         
         # Plotting the surface
         fig = plt.figure(figsize=(10, 7))
@@ -448,8 +449,27 @@ class BS_pricer:
         ax.set_ylabel('Time to Maturity (T)')
         ax.set_zlabel('Implied Volatility')
         ax.set_title(f'Black Scholes Implied Volatility Surface')
-        plt.show()
+        # plt.show()
+        return fig
 
+    def plot_stockpaths(self, N=15, steps=1000):
+        dt = self.T / steps  # Time step
+        t = np.linspace(0, self.T, steps + 1)
+        paths = np.zeros((steps + 1, N))
+        paths[0, :] = self.S0  # Initial stock price
+        
+        for i in range(1, steps + 1):
+            Z = np.random.normal(0, 1, N)
+            paths[i, :] = paths[i - 1, :] * np.exp((self.r - 0.5 * self.sig ** 2) * dt + self.sig * np.sqrt(dt) * Z)
+        fig, ax = plt.subplots(figsize=(10, 6))
+        # Plot each path with a thin line and some transparency
+        for i in range(N):
+            ax.plot(paths[:, i])
+        ax.set_xlabel("Time")
+        ax.set_ylabel("Stock Price")
+        ax.set_title(f"BSM model Stock Paths ({N} paths)")
+        return fig
+    
 
     def LSM(self, N=10000, paths=10000, order=2):
         """
@@ -545,28 +565,48 @@ class BS_pricer:
                 sigma = sigma_grid[i, j]
                 if show_pl:
                     # Compute P/L as the difference between price and intrinsic value
-                    intrinsic_value = max(0, (S - K) if self.payoff == 'call' else (K - S))
+                    intrinsic_value = max(0, (S - self.K) if self.payoff == 'call' else (self.K - S))
                     values[i, j] = self.BlackScholes(self.payoff,S,self.K,self.T,self.r,sigma) - intrinsic_value
                 else:
                     # Get the price
                     values[i, j] = self.BlackScholes(self.payoff,S,self.K,self.T,self.r,sigma)
 
         # Plot the 2D discrete color grid
-        plt.figure(figsize=(12, 8))
-        cmap = plt.get_cmap('RdYlGn' if show_pl else 'viridis')  
-        plt.pcolormesh(S_grid, sigma_grid, values, cmap=cmap, shading='auto', edgecolors='k', linewidth=0.5)
-        plt.colorbar(label='Option Price' if not show_pl else 'P/L')
+        # plt.figure(figsize=(12, 8))
+        # cmap = plt.get_cmap('RdYlGn' if show_pl else 'viridis')  
+        # plt.pcolormesh(S_grid, sigma_grid, values, cmap=cmap, shading='auto', edgecolors='k', linewidth=0.5)
+        # plt.colorbar(label='Option Price' if not show_pl else 'P/L')
 
-        # Annotate each cell with the value
+        # # Annotate each cell with the value
+        # for i in range(S_grid.shape[0]):
+        #     for j in range(S_grid.shape[1]):
+        #         plt.text(S_grid[i, j], sigma_grid[i, j], f'{values[i, j]:.2f}', ha='center', va='center', fontsize=8, color='black')
+
+        # # Add labels and title
+        # plt.xlabel('Spot Price (S)')
+        # plt.ylabel('Implied Volatility (sigma)')
+        # plt.title(f"Option {'P/L' if show_pl else 'Price'} Color Grid ({self.payoff.capitalize()} Option)")
+        # plt.show()
+        
+        fig = Figure(figsize=(12, 8))
+        ax = fig.add_subplot(111)
+        cmap = plt.get_cmap('RdYlGn' if show_pl else 'viridis')
+        pcm = ax.pcolormesh(S_grid, sigma_grid, values, cmap=cmap,
+                            shading='auto', edgecolors='k', linewidth=0.5)
+        
+        fig.colorbar(pcm, ax=ax, label='Option Price' if not show_pl else 'P/L')
+        
         for i in range(S_grid.shape[0]):
             for j in range(S_grid.shape[1]):
-                plt.text(S_grid[i, j], sigma_grid[i, j], f'{values[i, j]:.2f}', ha='center', va='center', fontsize=8, color='black')
+                ax.text(S_grid[i, j], sigma_grid[i, j], f'{values[i, j]:.2f}',
+                        ha='center', va='center', fontsize=8, color='black')
+        
+        ax.set_xlabel('Spot Price (S)')
+        ax.set_ylabel('Implied Volatility (sigma)')
+        ax.set_title(f"Option {'P/L' if show_pl else 'Price'} Color Grid ({self.payoff.capitalize()} Option)")
+        
+        return fig
 
-        # Add labels and title
-        plt.xlabel('Spot Price (S)')
-        plt.ylabel('Implied Volatility (sigma)')
-        plt.title(f"Option {'P/L' if show_pl else 'Price'} Color Grid ({self.payoff.capitalize()} Option)")
-        plt.show()
 
     def d1(self):
         return (np.log(self.S0 / self.K) + (self.r + self.sig**2 / 2) * self.T) / (self.sig * np.sqrt(self.T))
@@ -671,11 +711,11 @@ if __name__ == "__main__":
     Spots = [60,140]
     
     # Create option and process information
-    option_info = Option_param(S0, K, T,exercise="American",payoff="call")
+    option_info = Option_param(S0, K, T,exercise="American",payoff="put")
     BSM_process = process_info(r, sigma, Diffusion_process(r, sigma).exp_RV)
 
     pricer = BS_pricer(option_info,BSM_process)
-    print(pricer.Fourier_inversion())
+    # print(pricer.Fourier_inversion())
     print(pricer.closed_formula())
     # pricer.priceSurface(strikes,maturities)
     
@@ -688,12 +728,14 @@ if __name__ == "__main__":
     # print(f"Call option value: ${option_value:.4f} ± {standard_error:.4f}")
    
 
-    pde_price, pde_time = pricer.PDE_price(steps=(5000, 4000), Time=True, solver="splu")
-    print("European Call PDE Price: {:.4f}".format(pde_price))
-    print("PDE computation time: {:.4f} seconds".format(pde_time))
+    # pde_price, pde_time = pricer.PDE_price(steps=(5000, 4000), Time=True, solver="splu")
+    # print("European Call PDE Price: {:.4f}".format(pde_price))
+    # print("PDE computation time: {:.4f} seconds".format(pde_time))
     
-    # Test the LSM method. Use smaller values for N and paths for speed in this test.
-    lsm_price = pricer.LSM(N=100, paths=1000, order=2)
-    print("American LSM Price: {:.4f}".format(lsm_price))
+    # # Test the LSM method. Use smaller values for N and paths for speed in this test.
+    # lsm_price = pricer.LSM(N=100, paths=1000, order=2)
+    # print("American LSM Price: {:.4f}".format(lsm_price))
     
-    print(pricer.calculate_greeks())
+    # print(pricer.calculate_greeks())
+    # MCprice,stdErr,time = pricer.MC(N,True,True)
+    

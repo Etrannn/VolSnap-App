@@ -54,7 +54,6 @@ Credit to cantaro86 for BSM, Heston, Merton, VG and NG pricing models
 
 - IR models and pricing IR derivatives (IR swaps, swaptions, caps/floors, etc.): Vasicek Model, CIR Model, Hull-White 
 
-
-
-
-
+![Alt Text](https://github.com/Etrannn/VolSnap-App/blob/main/Images/IV_surface.png)
+![Alt Text](https://github.com/Etrannn/VolSnap-App/blob/main/Images/paths.png)
+![Alt Text](https://github.com/Etrannn/VolSnap-App/blob/main/Images/tree.png)

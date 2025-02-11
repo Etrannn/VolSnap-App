@@ -3,7 +3,24 @@ from scipy.fftpack import ifft
 from scipy.interpolate import interp1d
 from scipy.optimize import fsolve
 from scipy.integrate import quad
+import scipy.special as scps
+from math import factorial
+from functools import partial
 
+def cf_Heston_good(u, t, v0, mu, kappa, theta, sigma, rho):
+    """
+    Heston characteristic function as proposed by Schoutens (2004)
+    """
+    xi = kappa - sigma * rho * u * 1j
+    d = np.sqrt(xi**2 + sigma**2 * (u**2 + 1j * u))
+    g1 = (xi + d) / (xi - d)
+    g2 = 1 / g1
+    cf = np.exp(
+        1j * u * mu * t
+        + (kappa * theta) / (sigma**2) * ((xi - d) * t - 2 * np.log((1 - g2 * np.exp(-d * t)) / (1 - g2)))
+        + (v0 / sigma**2) * (xi - d) * (1 - np.exp(-d * t)) / (1 - g2 * np.exp(-d * t))
+    )
+    return cf
 
 def fft_Lewis(K, S0, r, T, cf, interp="cubic"):
     """
@@ -52,10 +69,11 @@ def IV_from_Lewis(K, S0, T, r, cf, disp=False):
             * 1
             / (u**2 + 0.25)
         )
-        int_value = quad(integrand, 1e-15, 2000, limit=2000, full_output=1)[0]
+        int_value = quad(integrand, 1e-15, 500, limit=2000, full_output=1)[0]
         return int_value
 
-    X0 = [0.2, 1, 2, 4, 0.0001]  # set of initial guess points
+    # X0 = [0.2, 1, 2, 4, 0.0001]  # set of initial guess points
+    X0 = [0.1, 0.2, 0.3, 0.5]  # set of initial guess points
     for x0 in X0:
         x, _, solved, msg = fsolve(
             obj_fun,
@@ -95,3 +113,76 @@ def Q2(k, cf, right_lim):
 
     return 1 / 2 + 1 / np.pi * quad(integrand, 1e-15, right_lim, limit=5000)[0]
 
+def Gil_Pelaez_pdf(x, cf, right_lim):
+    """
+    Gil Pelaez formula for the inversion of the characteristic function
+    INPUT
+    - x: is a number
+    - right_lim: is the right extreme of integration
+    - cf: is the characteristic function
+    OUTPUT
+    - the value of the density at x.
+    """
+
+    def integrand(u):
+        return np.real(np.exp(-u * x * 1j) * cf(u))
+
+    return 1 / np.pi * quad(integrand, 1e-15, right_lim)[0]
+
+def Heston_pdf(i, t, v0, mu, theta, sigma, kappa, rho):
+    """
+    Heston density by Fourier inversion.
+    """
+    cf_H_b_good = partial(
+        cf_Heston_good,
+        t=t,
+        v0=v0,
+        mu=mu,
+        theta=theta,
+        sigma=sigma,
+        kappa=kappa,
+        rho=rho,
+    )
+    return Gil_Pelaez_pdf(i, cf_H_b_good, np.inf)
+
+def VG_pdf(x, T, c, theta, sigma, kappa):
+    """
+    Variance Gamma density function
+    """
+    return (
+        2
+        * np.exp(theta * (x - c) / sigma**2)
+        / (kappa ** (T / kappa) * np.sqrt(2 * np.pi) * sigma * scps.gamma(T / kappa))
+        * ((x - c) ** 2 / (2 * sigma**2 / kappa + theta**2)) ** (T / (2 * kappa) - 1 / 4)
+        * scps.kv(
+            T / kappa - 1 / 2,
+            sigma ** (-2) * np.sqrt((x - c) ** 2 * (2 * sigma**2 / kappa + theta**2)),
+        )
+    )
+
+def Merton_pdf(x, T, mu, sig, lam, muJ, sigJ):
+    """
+    Merton density function
+    """
+    tot = 0
+    for k in range(20):
+        tot += (
+            (lam * T) ** k
+            * np.exp(-((x - mu * T - k * muJ) ** 2) / (2 * (T * sig**2 + k * sigJ**2)))
+            / (factorial(k) * np.sqrt(2 * np.pi * (sig**2 * T + k * sigJ**2)))
+        )
+    return np.exp(-lam * T) * tot
+
+def NIG_pdf(x, T, c, theta, sigma, kappa):
+    """
+    Merton density function
+    """
+    A = theta / (sigma**2)
+    B = np.sqrt(theta**2 + sigma**2 / kappa) / sigma**2
+    C = T / np.pi * np.exp(T / kappa) * np.sqrt(theta**2 / (kappa * sigma**2) + 1 / kappa**2)
+    return (
+        C
+        * np.exp(A * (x - c * T))
+        * scps.kv(1, B * np.sqrt((x - c * T) ** 2 + T**2 * sigma**2 / kappa))
+        / np.sqrt((x - c * T) ** 2 + T**2 * sigma**2 / kappa)
+    )

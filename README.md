@@ -40,13 +40,13 @@ Credit to cantaro86 for BSM, Heston, Merton, VG and NG pricing models
 
 - Methods: Fourier Inversion, FFT, PIDE, MC
 
-- Features: Price surface, IV Surface, Greeks, Stock Path simulations
+- Features: Price surface, IV Surface, Greeks, Fourier Inversion and density plot
 
 #### Variance Gamma Model:
 
 - Methods: Fourier Inversion, FFT, PIDE, MC
 
-- Features: Price surface, IV Surface, Greeks, Stock Path simulations
+- Features: Price surface, IV Surface, Greeks, Fourier Inversion and density plot
 
 
 ### WIP
